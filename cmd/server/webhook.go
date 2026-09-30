@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -47,7 +49,10 @@ func (s *Session) dispatchWebhook(event string, data any) {
 
 // summarizeMessage extrai os campos úteis de uma mensagem recebida e inclui o
 // payload bruto (protojson) para integrações que precisem de mais detalhes.
-func summarizeMessage(evt *events.Message) map[string]any {
+// Quando client != nil e a mensagem tem mídia, baixa+decripta e embute como
+// base64 (mesmo mecanismo já usado pra Chatwoot em chatwoot.go) — quem chama
+// deve fazer isso fora do goroutine de eventos do whatsmeow (pode demorar).
+func summarizeMessage(client *whatsmeow.Client, evt *events.Message) map[string]any {
 	info := evt.Info
 	out := map[string]any{
 		"id":        info.ID,
@@ -62,6 +67,16 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	}
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
+	}
+	if client != nil {
+		if dl := downloadableOf(evt.Message); dl != nil {
+			if data, err := client.Download(context.Background(), dl); err == nil && len(data) > 0 {
+				fname, mime := mediaMeta(evt.Message)
+				out["media"] = base64.StdEncoding.EncodeToString(data)
+				out["mediaMimeType"] = mime
+				out["mediaFileName"] = fname
+			}
+		}
 	}
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)

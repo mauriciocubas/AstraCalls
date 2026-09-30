@@ -397,7 +397,9 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.handleIncomingReaction(evt) // reação (emoji) numa mensagem
 		default:
 			s.storeMessageEvent(evt)
-			s.dispatchWebhook("message", summarizeMessage(evt))
+			// baixar mídia pode demorar — fora do goroutine de eventos do
+			// whatsmeow, senão atrasa o processamento de mensagens seguintes.
+			go s.dispatchWebhook("message", summarizeMessage(s.client, evt))
 			go s.chatwootPushIncoming(evt)
 			s.maybeMarkRead(ctx, evt)
 		}
