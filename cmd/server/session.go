@@ -398,6 +398,9 @@ func (s *Session) handleEvent(rawEvt any) {
 		case evt.Message.GetProtocolMessage() != nil &&
 			evt.Message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_REVOKE:
 			go s.handleIncomingRevoke(evt) // cliente (ou nós, outro device) apagou uma mensagem
+		case evt.Message.GetProtocolMessage() != nil &&
+			evt.Message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT:
+			go s.handleIncomingEdit(evt) // cliente (ou nós, outro device) editou uma mensagem
 		default:
 			s.storeMessageEvent(evt)
 			// baixar mídia pode demorar — fora do goroutine de eventos do

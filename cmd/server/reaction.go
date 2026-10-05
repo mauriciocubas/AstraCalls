@@ -41,6 +41,8 @@ func (s *Session) handleIncomingReaction(evt *events.Message) {
 		"reactorPhone": s.realPhone(evt.Info.Sender),
 		"reactorName":  who,
 		"chat":         evt.Info.Chat.String(),
+		"isGroup":      evt.Info.IsGroup,
+		"fromMe":       evt.Info.IsFromMe, // true = NÓS reagimos (outro device), não o cliente
 		"toMe":         rm.GetKey().GetFromMe(), // true = reagiram a uma mensagem NOSSA
 		"timestamp":    evt.Info.Timestamp.UnixMilli(),
 	})
@@ -64,5 +66,28 @@ func (s *Session) handleIncomingRevoke(evt *events.Message) {
 		"participant":  key.GetParticipant(),
 		"revokerPhone": s.realPhone(evt.Info.Sender),
 		"timestamp":    evt.Info.Timestamp.UnixMilli(),
+	})
+}
+
+// Edição ("editar mensagem"). Chega como ProtocolMessage tipo MESSAGE_EDIT —
+// key.ID é a mensagem original, EditedMessage traz o conteúdo novo. key.FromMe
+// indica de quem ERA a mensagem original (false = o contato editou uma
+// mensagem que ELE mandou).
+func (s *Session) handleIncomingEdit(evt *events.Message) {
+	pm := evt.Message.GetProtocolMessage()
+	key := pm.GetKey()
+	newText := messageText(pm.GetEditedMessage())
+	if key.GetID() == "" || newText == "" {
+		return
+	}
+	s.dispatchWebhook("edit", map[string]any{
+		"messageId":   key.GetID(),
+		"text":        newText,
+		"chat":        evt.Info.Chat.String(),
+		"isGroup":     evt.Info.IsGroup,
+		"fromMe":      key.GetFromMe(),
+		"participant": key.GetParticipant(),
+		"editorPhone": s.realPhone(evt.Info.Sender),
+		"timestamp":   evt.Info.Timestamp.UnixMilli(),
 	})
 }
