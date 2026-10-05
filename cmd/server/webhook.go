@@ -65,6 +65,12 @@ func summarizeMessage(client *whatsmeow.Client, evt *events.Message) map[string]
 		"type":      messageType(evt.Message),
 		"text":      messageText(evt.Message),
 	}
+	// Em grupos com addressing mode "lid", Sender vem como LID (identificador
+	// de privacidade, não o telefone real) — SenderAlt carrega o JID
+	// alternativo (telefone de verdade) quando o whatsmeow consegue resolver.
+	if !info.SenderAlt.IsEmpty() {
+		out["senderAlt"] = info.SenderAlt.String()
+	}
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
 	}
