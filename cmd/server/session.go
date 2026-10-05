@@ -395,6 +395,9 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.handleIncomingEventResponse(evt) // RSVP de evento (decodifica + encaminha)
 		case evt.Message.GetReactionMessage() != nil || evt.Message.GetEncReactionMessage() != nil:
 			go s.handleIncomingReaction(evt) // reação (emoji) numa mensagem
+		case evt.Message.GetProtocolMessage() != nil &&
+			evt.Message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_REVOKE:
+			go s.handleIncomingRevoke(evt) // cliente (ou nós, outro device) apagou uma mensagem
 		default:
 			s.storeMessageEvent(evt)
 			// baixar mídia pode demorar — fora do goroutine de eventos do

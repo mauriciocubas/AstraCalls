@@ -45,3 +45,24 @@ func (s *Session) handleIncomingReaction(evt *events.Message) {
 		"timestamp":    evt.Info.Timestamp.UnixMilli(),
 	})
 }
+
+// Revoke ("apagar para todos"). Chega como ProtocolMessage tipo REVOKE — key.ID
+// é a mensagem original apagada, key.FromMe indica de quem ERA essa mensagem
+// (false = o contato apagou uma mensagem que ELE mandou; true = apagamos a
+// nossa de outro device). Webhook `revoke` dedicado — não é mensagem nova.
+func (s *Session) handleIncomingRevoke(evt *events.Message) {
+	pm := evt.Message.GetProtocolMessage()
+	key := pm.GetKey()
+	if key.GetID() == "" {
+		return
+	}
+	s.dispatchWebhook("revoke", map[string]any{
+		"messageId":    key.GetID(),
+		"chat":         evt.Info.Chat.String(),
+		"isGroup":      evt.Info.IsGroup,
+		"fromMe":       key.GetFromMe(),
+		"participant":  key.GetParticipant(),
+		"revokerPhone": s.realPhone(evt.Info.Sender),
+		"timestamp":    evt.Info.Timestamp.UnixMilli(),
+	})
+}
