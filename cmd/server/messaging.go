@@ -101,12 +101,35 @@ func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		To   string `json:"to"`
 		Text string `json:"text"`
+		// Resposta/citação (opcional) — StanzaID da mensagem original, participant
+		// (JID de quem mandou, só em grupo) e um texto de fallback pro preview da
+		// citação do lado de quem recebe (o cliente WhatsApp já tem o conteúdo de
+		// verdade localmente se a mensagem original passou por ele; QuotedText só
+		// cobre o caso de não ter).
+		QuotedID          string `json:"quotedId"`
+		QuotedParticipant string `json:"quotedParticipant"`
+		QuotedText        string `json:"quotedText"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to and text required"})
 		return
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{Conversation: proto.String(b.Text)})
+	if b.QuotedID == "" {
+		s.send(sess, w, r, b.To, &waE2E.Message{Conversation: proto.String(b.Text)})
+		return
+	}
+	ctx := &waE2E.ContextInfo{
+		StanzaID:      proto.String(b.QuotedID),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(b.QuotedText)},
+	}
+	if b.QuotedParticipant != "" {
+		if jid, err := resolveRecipient(b.QuotedParticipant); err == nil {
+			ctx.Participant = proto.String(jid.String())
+		}
+	}
+	s.send(sess, w, r, b.To, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(b.Text), ContextInfo: ctx},
+	})
 }
 
 func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
