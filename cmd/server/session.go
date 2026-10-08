@@ -401,6 +401,19 @@ func (s *Session) handleEvent(rawEvt any) {
 		case evt.Message.GetProtocolMessage() != nil &&
 			evt.Message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT:
 			go s.handleIncomingEdit(evt) // cliente (ou nós, outro device) editou uma mensagem
+		case evt.Message.GetEditedMessage() != nil:
+			// Formato alternativo de edição (stanza com atributo edit="1" — visto
+			// em mensagens 1:1 recentes): não vem como ProtocolMessage, vem como
+			// campo direto Message.EditedMessage (FutureProofMessage). O ID do
+			// stanza é o da mensagem original sendo editada.
+			go s.handleIncomingEditAlt(evt)
+		case evt.Message.GetSecretEncryptedMessage() != nil &&
+			evt.Message.GetSecretEncryptedMessage().GetSecretEncType() == waE2E.SecretEncryptedMessage_MESSAGE_EDIT:
+			// Formato atual de edição em clientes recentes do WhatsApp: não vem como
+			// ProtocolMessage nem EditedMessage — vem criptografado (SecretEncryptedMessage),
+			// igual reação/voto de enquete. Sem este case cai no default e é tratado como
+			// mensagem nova vazia (texto não decodifica) — a edição nunca chega no Bitrix.
+			go s.handleIncomingEditSecret(evt)
 		default:
 			s.storeMessageEvent(evt)
 			// baixar mídia pode demorar — fora do goroutine de eventos do

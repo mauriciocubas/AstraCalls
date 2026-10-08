@@ -91,3 +91,56 @@ func (s *Session) handleIncomingEdit(evt *events.Message) {
 		"timestamp":   evt.Info.Timestamp.UnixMilli(),
 	})
 }
+
+// Mesma ideia de handleIncomingEdit, pro formato alternativo (stanza edit="1",
+// sem ProtocolMessage — ver comentário no case em session.go). Aqui não há
+// "key" próprio: o id do stanza (evt.Info.ID) É o da mensagem original.
+func (s *Session) handleIncomingEditAlt(evt *events.Message) {
+	newText := messageText(evt.Message.GetEditedMessage().GetMessage())
+	if evt.Info.ID == "" || newText == "" {
+		return
+	}
+	s.dispatchWebhook("edit", map[string]any{
+		"messageId":   string(evt.Info.ID),
+		"text":        newText,
+		"chat":        evt.Info.Chat.String(),
+		"isGroup":     evt.Info.IsGroup,
+		"fromMe":      evt.Info.IsFromMe,
+		"editorPhone": s.realPhone(evt.Info.Sender),
+		"timestamp":   evt.Info.Timestamp.UnixMilli(),
+	})
+}
+
+// Terceiro formato de edição — o mais comum em clientes recentes do WhatsApp:
+// chega como SecretEncryptedMessage (tipo MESSAGE_EDIT), igual EncReactionMessage
+// e voto de enquete. targetMessageKey aponta a mensagem original; o conteúdo novo
+// só decifra com o messageSecret dela, que o whatsmeow já guardou sozinho em
+// Store.MsgSecrets quando a mensagem original chegou (storeMessageSecret, em
+// processProtocolParts — roda pra toda mensagem recebida, não só protocol).
+// DecryptSecretEncryptedMessage (público no whatsmeow) resolve a partir daí.
+func (s *Session) handleIncomingEditSecret(evt *events.Message) {
+	sec := evt.Message.GetSecretEncryptedMessage()
+	targetKey := sec.GetTargetMessageKey()
+	if targetKey.GetID() == "" {
+		return
+	}
+	decoded, err := s.client.DecryptSecretEncryptedMessage(s.mgr.appCtx, evt)
+	if err != nil {
+		s.log.Warn("decrypt edit (secretEncrypted) falhou", "err", err, "messageId", targetKey.GetID())
+		return
+	}
+	newText := messageText(decoded)
+	if newText == "" {
+		return
+	}
+	s.dispatchWebhook("edit", map[string]any{
+		"messageId":   targetKey.GetID(),
+		"text":        newText,
+		"chat":        evt.Info.Chat.String(),
+		"isGroup":     evt.Info.IsGroup,
+		"fromMe":      targetKey.GetFromMe(),
+		"participant": targetKey.GetParticipant(),
+		"editorPhone": s.realPhone(evt.Info.Sender),
+		"timestamp":   evt.Info.Timestamp.UnixMilli(),
+	})
+}
