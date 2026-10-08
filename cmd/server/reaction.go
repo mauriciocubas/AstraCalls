@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -77,6 +79,7 @@ func (s *Session) handleIncomingEdit(evt *events.Message) {
 	pm := evt.Message.GetProtocolMessage()
 	key := pm.GetKey()
 	newText := messageText(pm.GetEditedMessage())
+	s.log.Info("edit recebido (ProtocolMessage)", "messageId", key.GetID(), "hasText", newText != "")
 	if key.GetID() == "" || newText == "" {
 		return
 	}
@@ -97,6 +100,7 @@ func (s *Session) handleIncomingEdit(evt *events.Message) {
 // "key" próprio: o id do stanza (evt.Info.ID) É o da mensagem original.
 func (s *Session) handleIncomingEditAlt(evt *events.Message) {
 	newText := messageText(evt.Message.GetEditedMessage().GetMessage())
+	s.log.Info("edit recebido (EditedMessage/Alt)", "messageId", evt.Info.ID, "hasText", newText != "")
 	if evt.Info.ID == "" || newText == "" {
 		return
 	}
@@ -121,6 +125,7 @@ func (s *Session) handleIncomingEditAlt(evt *events.Message) {
 func (s *Session) handleIncomingEditSecret(evt *events.Message) {
 	sec := evt.Message.GetSecretEncryptedMessage()
 	targetKey := sec.GetTargetMessageKey()
+	s.log.Info("edit recebido (SecretEncryptedMessage)", "targetMessageId", targetKey.GetID())
 	if targetKey.GetID() == "" {
 		return
 	}
@@ -131,6 +136,24 @@ func (s *Session) handleIncomingEditSecret(evt *events.Message) {
 	}
 	newText := messageText(decoded)
 	if newText == "" {
+		// Confirmado em produção (dump de diagnóstico): o Message decifrado não traz o
+		// texto direto — ele é ele mesmo um ProtocolMessage tipo MESSAGE_EDIT, cujo
+		// EditedMessage é que tem o conteúdo novo. Mesma forma do pm.GetEditedMessage()
+		// em handleIncomingEdit, só que chegou aqui por dentro do envelope criptografado.
+		if pm := decoded.GetProtocolMessage(); pm != nil && pm.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
+			newText = messageText(pm.GetEditedMessage())
+		}
+	}
+	if newText == "" {
+		// Formato alternativo (FutureProofMessage), por garantia.
+		if inner := decoded.GetEditedMessage().GetMessage(); inner != nil {
+			newText = messageText(inner)
+		}
+	}
+	s.log.Info("edit (secretEncrypted) decifrado", "messageId", targetKey.GetID(), "hasText", newText != "")
+	if newText == "" {
+		s.log.Warn("edit (secretEncrypted) sem texto reconhecido — dump pra diagnóstico",
+			"messageId", targetKey.GetID(), "decoded", fmt.Sprintf("%v", decoded))
 		return
 	}
 	s.dispatchWebhook("edit", map[string]any{

@@ -415,6 +415,12 @@ func (s *Session) handleEvent(rawEvt any) {
 			// mensagem nova vazia (texto não decodifica) — a edição nunca chega no Bitrix.
 			go s.handleIncomingEditSecret(evt)
 		default:
+			if sec := evt.Message.GetSecretEncryptedMessage(); sec != nil {
+				// Diagnóstico: é SecretEncryptedMessage mas de um SecretEncType que
+				// nenhum case acima cobre (ex.: enum diferente de MESSAGE_EDIT em
+				// alguma versão do app) — cairia aqui como mensagem vazia sem isto.
+				s.log.Info("secretEncryptedMessage não tratado", "secretEncType", sec.GetSecretEncType().String(), "targetMessageId", sec.GetTargetMessageKey().GetID())
+			}
 			s.storeMessageEvent(evt)
 			// baixar mídia pode demorar — fora do goroutine de eventos do
 			// whatsmeow, senão atrasa o processamento de mensagens seguintes.
