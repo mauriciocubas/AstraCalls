@@ -10,6 +10,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -67,9 +68,21 @@ func summarizeMessage(client *whatsmeow.Client, evt *events.Message) map[string]
 	}
 	// Em grupos com addressing mode "lid", Sender vem como LID (identificador
 	// de privacidade, não o telefone real) — SenderAlt carrega o JID
-	// alternativo (telefone de verdade) quando o whatsmeow consegue resolver.
+	// alternativo (telefone de verdade) quando o whatsmeow já tinha resolvido
+	// no momento do evento.
 	if !info.SenderAlt.IsEmpty() {
 		out["senderAlt"] = info.SenderAlt.String()
+	}
+	// Em 1:1, Chat == Sender (não tem SenderAlt pra isso). Se o WhatsApp já
+	// migrou o contato pra addressing "lid", Chat vem como LID — sem resolver
+	// aqui, cada mensagem pode trocar de identificador e duplicar a conversa
+	// do lado de quem integra (CRM). Consulta o mapa local do whatsmeow
+	// (Store.LIDs, sincronizado via app state — não é chamada de rede) e, se
+	// já tiver o telefone de verdade, manda como chatAlt.
+	if client != nil && info.Chat.Server == types.HiddenUserServer {
+		if pn, err := client.Store.LIDs.GetPNForLID(context.Background(), info.Chat); err == nil && !pn.IsEmpty() {
+			out["chatAlt"] = pn.String()
+		}
 	}
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
