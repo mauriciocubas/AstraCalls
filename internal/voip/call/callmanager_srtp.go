@@ -56,6 +56,16 @@ func (m *CallManager) reinitSrtpLocked(peerKey []byte, peerJid types.JID) {
 	if call == nil || call.EncryptionKey == nil {
 		return
 	}
+	// Chegou aqui porque um device diferente do que originou initSrtpKeysLocked
+	// acabou de aceitar a chamada (chave de chamada mudou). O decoder Opus é
+	// reaproveitado entre devices e não tem como saber que o peer trocou — fecha
+	// e recria pra não alimentar o resampler do SILK com estado/áudio do device
+	// anterior, que foi o gatilho observado do crash em produção.
+	if m.codec != nil {
+		m.codec.Close()
+		m.codec = nil
+	}
+	m.initCodec()
 	ourBase := wanode.CleanJID(m.ownCredJid())
 	var participants []string
 	if call.RelayData != nil {

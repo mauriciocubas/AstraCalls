@@ -82,6 +82,21 @@ func (c *CallInfo) IsRinging() bool {
 
 func (c *CallInfo) IsEnded() bool { return c.StateData.State == core.CallStateEnded }
 
+// HasMediaAccepted indica que a chamada já saiu da disputa de toque entre
+// dispositivos (ringing/incoming_ringing) — só a partir daqui o peer e as
+// chaves SRTP estão definitivos. Usado para não alimentar o decoder Opus com
+// pacotes de áudio que cheguem antes do accept (ex.: enquanto vários devices
+// do destino ainda estão tocando), que é a janela onde vimos o crash do
+// resampler do SILK (libopus_mlow) em produção.
+func (c *CallInfo) HasMediaAccepted() bool {
+	switch c.StateData.State {
+	case core.CallStateConnecting, core.CallStateActive, core.CallStateOnHold:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *CallInfo) CanAccept() bool { return c.StateData.State == core.CallStateIncomingRinging }
 
 func (c *CallInfo) CanReject() bool {

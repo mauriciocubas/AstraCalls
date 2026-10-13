@@ -136,6 +136,14 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 		m.mu.Unlock()
 		return
 	}
+	// Antes do accept (vários devices do destino podem estar tocando e disputando
+	// a chamada), os pacotes de mídia que chegam pelo relay "excedente" não têm
+	// peer/chaves definitivos ainda — decodificá-los foi o gatilho observado do
+	// crash do resampler SILK (libopus_mlow). Só decodifica a partir daqui.
+	if m.currentCall == nil || !m.currentCall.HasMediaAccepted() {
+		m.mu.Unlock()
+		return
+	}
 	ssrc := media.RTPSsrc(data)
 	if ssrc == m.selfSsrc {
 		m.mu.Unlock()
