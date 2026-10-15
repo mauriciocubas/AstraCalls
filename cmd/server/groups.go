@@ -35,9 +35,23 @@ func resolveParticipants(list []string) ([]types.JID, error) {
 func groupJSON(g *types.GroupInfo) map[string]any {
 	parts := make([]map[string]any, 0, len(g.Participants))
 	for _, p := range g.Participants {
+		// Em grupos com addressing "lid", p.JID (e "number"/"pn") é o LID, não o
+		// telefone real — p.PhoneNumber só vem preenchido quando o WhatsApp manda
+		// o atributo phone_number (grupo não-anônimo). Expor os dois separados
+		// evita que menção (@_NUMERO) vire LID gigante no Bitrix.
+		phoneNumber := ""
+		if !p.PhoneNumber.IsEmpty() {
+			phoneNumber = p.PhoneNumber.User
+		}
+		lid := ""
+		if !p.LID.IsEmpty() {
+			lid = p.LID.User
+		}
 		parts = append(parts, map[string]any{
 			"jid":          p.JID.String(),
 			"number":       p.JID.User,
+			"phoneNumber":  phoneNumber,
+			"lid":          lid,
 			"isAdmin":      p.IsAdmin,
 			"isSuperAdmin": p.IsSuperAdmin,
 			// aliases WAHA

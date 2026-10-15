@@ -64,6 +64,7 @@ func (s *server) routes() http.Handler {
 
 	// Contatos (whatsmeow)
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/check", s.handleCheckNumber)
+	mux.HandleFunc("GET /api/sessions/{sid}/lid-to-pn/{lid}", s.handleLIDToPN)
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts", s.handleListContacts)
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}", s.handleContactInfo)
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}/picture", s.handleContactPicture)

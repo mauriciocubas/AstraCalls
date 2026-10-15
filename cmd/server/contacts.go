@@ -9,6 +9,35 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+// GET /api/sessions/{sid}/lid-to-pn/{lid}  → telefone real por trás de um LID
+// (mapa persistente que o próprio whatsmeow mantém, populado por histórico,
+// listas de participante de grupo, contactInfo etc. — cobre @menção de
+// qualquer contato, não só quem está na lista de participantes do chat atual).
+func (s *server) handleLIDToPN(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	lidStr := strings.TrimSpace(r.PathValue("lid"))
+	lidStr = strings.SplitN(lidStr, "@", 2)[0]
+	lidStr = strings.SplitN(lidStr, ":", 2)[0]
+	if lidStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lid required"})
+		return
+	}
+	lid := types.NewJID(lidStr, types.HiddenUserServer)
+	pn, err := sess.client.Store.LIDs.GetPNForLID(r.Context(), lid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if pn.IsEmpty() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lid": lid.User, "pn": pn.User})
+}
+
 // GET /api/sessions/{sid}/contacts/check?phone=...
 // Consulta autoritativa ao WhatsApp: o número existe? Qual o JID canônico?
 // Resolve o problema do 9º dígito (BR) — devolve o JID real independente de o
