@@ -51,21 +51,32 @@ const (
 
 var globalInitOnce sync.Once
 
+// opusMu serializa TODA entrada na libopus_mlow (encode/decode/close),
+// mesmo entre instâncias de codec DIFERENTES.
+//
+// Primeira ocorrência (produção, hoje): múltiplos relés ICE da MESMA sessão
+// decodificando concorrentemente na MESMA instância — mitigado antes com
+// mutex por-instância, mas isso não cobria o caso abaixo.
+//
+// Segunda ocorrência, horas depois: DUAS SESSÕES diferentes (duas linhas
+// WhatsApp do mesmo tenant) processaram "remote accepted call" pro MESMO
+// call_id quase no mesmo instante — cada sessão tem seu próprio
+// callRegistry (cmd/server/session.go), sem deduplicação entre sessões, e
+// cada uma criou seu próprio CallManager/mlowCodec independente. Isso é um
+// problema de ROTEAMENTO DE SINALIZAÇÃO (duas sessões tratando o mesmo
+// call_id como seu) que ainda precisa de investigação própria — mas o
+// resultado prático foi DUAS instâncias de mlowCodec DIFERENTES decodificando
+// ao mesmo tempo, e o crash aconteceu mesmo assim. Como a documentação da lib
+// (opus_global_create) descreve "singleton tables" compartilhadas entre
+// instâncias e o histórico do CHANGELOG já mostra fragilidade de SIMD nessa
+// mesma área (resampler), a causa exata da corrupção cross-instância não foi
+// isolada — mas serializar TUDO que entra na lib C, não só por instância,
+// elimina a classe inteira de corrida sem precisar confirmar o mecanismo
+// exato. Custo de performance é desprezível pro volume de chamadas deste
+// sistema.
+var opusMu sync.Mutex
+
 type mlowCodec struct {
-	// encMu/decMu: libopus_mlow (SILK) não é thread-safe — o estado do
-	// resampler interno fica num struct mutável sem lock nenhum do lado C.
-	// Achado ao vivo (crash em produção, "assertion failed: 0" em
-	// silk/resampler.c:101 — exatamente a validação de sample rate do
-	// silk_resampler_init): múltiplos relés ICE ficam ativos ao mesmo tempo
-	// (redundância de conectividade) e cada um entrega áudio numa goroutine
-	// própria (ver handleAudioRelayData) — sem serializar, duas chamadas a
-	// Decode() concorrentes na MESMA instância corrompem o estado do
-	// resampler e o assert interno aborta o processo inteiro (SIGABRT não dá
-	// pra recuperar via recover(), mesmo em Go). Encoder e decoder são
-	// ponteiros C separados — cada um com seu próprio mutex, não competem
-	// entre si.
-	encMu   sync.Mutex
-	decMu   sync.Mutex
 	encoder unsafe.Pointer
 	decoder unsafe.Pointer
 }
@@ -111,8 +122,8 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 	if len(pcm) == 0 {
 		return nil, nil
 	}
-	c.encMu.Lock()
-	defer c.encMu.Unlock()
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	in := make([]C.int16_t, len(pcm))
 	for i, s := range pcm {
 		if s > 1 {
@@ -135,8 +146,8 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
-	c.decMu.Lock()
-	defer c.decMu.Unlock()
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	out := make([]C.int16_t, mlowMaxOut)
 	var n C.int
 	if frame == nil {
@@ -159,13 +170,11 @@ func (c *mlowCodec) FrameSize() int  { return mlowFrameSize }
 func (c *mlowCodec) SampleRate() int { return mlowSampleRate }
 
 func (c *mlowCodec) Close() {
-	// Mesma ordem de lock de Encode/Decode (enc depois dec) — evita destruir
-	// o ponteiro C enquanto uma chamada concorrente ainda está em voo (use-
-	// after-free seria pior que a corrida que este arquivo já corrige acima).
-	c.encMu.Lock()
-	defer c.encMu.Unlock()
-	c.decMu.Lock()
-	defer c.decMu.Unlock()
+	// Mesmo opusMu de Encode/Decode — evita destruir o ponteiro C enquanto
+	// uma chamada concorrente (desta OU de outra instância) ainda está em
+	// voo (use-after-free seria pior que a corrida que este arquivo corrige).
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
@@ -177,9 +186,8 @@ func (c *mlowCodec) Close() {
 }
 
 type opusGeneric struct {
-	// Mesmo motivo do mutex em mlowCodec acima — mesma lib C por trás.
-	encMu      sync.Mutex
-	decMu      sync.Mutex
+	// Mesmo opusMu de mlowCodec — mesma lib C por trás, estado potencialmente
+	// compartilhado entre QUALQUER instância (ver comentário em opusMu).
 	encoder    unsafe.Pointer
 	decoder    unsafe.Pointer
 	sampleRate int
@@ -210,8 +218,8 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 	if len(pcm) == 0 {
 		return nil, nil
 	}
-	c.encMu.Lock()
-	defer c.encMu.Unlock()
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	in := make([]C.int16_t, len(pcm))
 	for i, s := range pcm {
 		if s > 1 {
@@ -234,8 +242,8 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
-	c.decMu.Lock()
-	defer c.decMu.Unlock()
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	maxOut := c.sampleRate / 1000 * 120
 	out := make([]C.int16_t, maxOut)
 	var n C.int
@@ -259,10 +267,8 @@ func (c *opusGeneric) FrameSize() int  { return c.frameSize }
 func (c *opusGeneric) SampleRate() int { return c.sampleRate }
 
 func (c *opusGeneric) Close() {
-	c.encMu.Lock()
-	defer c.encMu.Unlock()
-	c.decMu.Lock()
-	defer c.decMu.Unlock()
+	opusMu.Lock()
+	defer opusMu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
