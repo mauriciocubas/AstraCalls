@@ -4,6 +4,7 @@ package media
 
 import (
 	"math"
+	"sync"
 	"testing"
 )
 
@@ -47,5 +48,51 @@ func TestMLowCodecRoundtrip(t *testing.T) {
 	}
 	if len(plc) == 0 {
 		t.Fatal("PLC returned no samples")
+	}
+}
+
+// TestMLowCodecConcurrentDecode reproduz o padrão observado em produção: em
+// chamadas com vários relés ICE ativos ao mesmo tempo (redundância de
+// conectividade), cada relé entrega áudio numa goroutine própria e chama
+// Decode() na MESMA instância de codec concorrentemente. Sem o mutex em
+// mlowCodec, isso corrompe o estado do resampler SILK (libopus_mlow não é
+// thread-safe) e aborta o processo inteiro com "assertion failed: 0" em
+// silk/resampler.c:101 — SIGABRT não dá pra recuperar nem com recover() em
+// Go. Roda sob -race pra pegar qualquer acesso concorrente não serializado.
+func TestMLowCodecConcurrentDecode(t *testing.T) {
+	codec, err := NewMLowCodec(DefaultCodecOptions)
+	if err != nil {
+		t.Fatalf("NewMLowCodec: %v", err)
+	}
+	defer codec.Close()
+
+	frame := make([]float32, 960)
+	for i := range frame {
+		frame[i] = 0.3 * float32(math.Sin(2*math.Pi*440*float64(i)/16000))
+	}
+	encoded, err := codec.Encode(frame)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	const goroutines = 8
+	const itersPerGoroutine = 50
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines*itersPerGoroutine)
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < itersPerGoroutine; i++ {
+				if _, err := codec.Decode(encoded); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent Decode: %v", err)
 	}
 }

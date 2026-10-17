@@ -52,6 +52,20 @@ const (
 var globalInitOnce sync.Once
 
 type mlowCodec struct {
+	// encMu/decMu: libopus_mlow (SILK) não é thread-safe — o estado do
+	// resampler interno fica num struct mutável sem lock nenhum do lado C.
+	// Achado ao vivo (crash em produção, "assertion failed: 0" em
+	// silk/resampler.c:101 — exatamente a validação de sample rate do
+	// silk_resampler_init): múltiplos relés ICE ficam ativos ao mesmo tempo
+	// (redundância de conectividade) e cada um entrega áudio numa goroutine
+	// própria (ver handleAudioRelayData) — sem serializar, duas chamadas a
+	// Decode() concorrentes na MESMA instância corrompem o estado do
+	// resampler e o assert interno aborta o processo inteiro (SIGABRT não dá
+	// pra recuperar via recover(), mesmo em Go). Encoder e decoder são
+	// ponteiros C separados — cada um com seu próprio mutex, não competem
+	// entre si.
+	encMu   sync.Mutex
+	decMu   sync.Mutex
 	encoder unsafe.Pointer
 	decoder unsafe.Pointer
 }
@@ -97,6 +111,8 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 	if len(pcm) == 0 {
 		return nil, nil
 	}
+	c.encMu.Lock()
+	defer c.encMu.Unlock()
 	in := make([]C.int16_t, len(pcm))
 	for i, s := range pcm {
 		if s > 1 {
@@ -119,6 +135,8 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
 	out := make([]C.int16_t, mlowMaxOut)
 	var n C.int
 	if frame == nil {
@@ -141,6 +159,13 @@ func (c *mlowCodec) FrameSize() int  { return mlowFrameSize }
 func (c *mlowCodec) SampleRate() int { return mlowSampleRate }
 
 func (c *mlowCodec) Close() {
+	// Mesma ordem de lock de Encode/Decode (enc depois dec) — evita destruir
+	// o ponteiro C enquanto uma chamada concorrente ainda está em voo (use-
+	// after-free seria pior que a corrida que este arquivo já corrige acima).
+	c.encMu.Lock()
+	defer c.encMu.Unlock()
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
@@ -152,6 +177,9 @@ func (c *mlowCodec) Close() {
 }
 
 type opusGeneric struct {
+	// Mesmo motivo do mutex em mlowCodec acima — mesma lib C por trás.
+	encMu      sync.Mutex
+	decMu      sync.Mutex
 	encoder    unsafe.Pointer
 	decoder    unsafe.Pointer
 	sampleRate int
@@ -182,6 +210,8 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 	if len(pcm) == 0 {
 		return nil, nil
 	}
+	c.encMu.Lock()
+	defer c.encMu.Unlock()
 	in := make([]C.int16_t, len(pcm))
 	for i, s := range pcm {
 		if s > 1 {
@@ -204,6 +234,8 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
 	maxOut := c.sampleRate / 1000 * 120
 	out := make([]C.int16_t, maxOut)
 	var n C.int
@@ -227,6 +259,10 @@ func (c *opusGeneric) FrameSize() int  { return c.frameSize }
 func (c *opusGeneric) SampleRate() int { return c.sampleRate }
 
 func (c *opusGeneric) Close() {
+	c.encMu.Lock()
+	defer c.encMu.Unlock()
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
