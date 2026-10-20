@@ -64,8 +64,71 @@ func (s *Socket) GetUSyncDevices(ctx context.Context, jids []types.JID) ([]types
 	return s.cli.GetUserDevices(ctx, jids)
 }
 
+// AssertSessions prepara o store Signal antes de cifrar a call key do offer.
+// Antes era stub (return nil): sessões PN+LID duplicadas/corrompidas geravam
+// terminate reason=enc no peer enquanto a linha Principal (só LID) ligava.
+//
+// - PN conhecido → migra store pra LID e apaga restos PN
+// - LID → apaga sessões PN espelho (mesmo contato) se o mapa LID↔PN existir
+// - force → descarta sessão/identity do peer e busca prekeys de novo
+// - sem sessão → FetchPreKeys pra o EncryptMessageForDevices fazer pkmsg limpo
 func (s *Socket) AssertSessions(ctx context.Context, jids []types.JID, force bool) error {
+	if s.cli == nil || s.cli.Store == nil || s.cli.Store.Sessions == nil {
+		return nil
+	}
+	di := s.di()
+	var missing []types.JID
+	seenUser := map[string]bool{}
+
+	for _, jid := range jids {
+		enc := jid
+		if jid.Server == types.DefaultUserServer {
+			if lid := s.ResolveLIDForPN(ctx, jid); !lid.IsEmpty() && lid.Server == types.HiddenUserServer {
+				di.MigrateSessionStore(ctx, jid, lid)
+				// DeleteAllSessions usa prefixo SignalAddressUser (PN cru / LID com _1).
+				s.dropSignalUser(ctx, jid.SignalAddressUser())
+				enc = types.JID{User: lid.User, Device: jid.Device, Server: types.HiddenUserServer}
+			}
+		} else if jid.Server == types.HiddenUserServer && s.cli.Store.LIDs != nil {
+			if pn, err := s.cli.Store.LIDs.GetPNForLID(ctx, types.JID{User: jid.User, Server: types.HiddenUserServer}); err == nil && !pn.IsEmpty() {
+				di.MigrateSessionStore(ctx, pn, jid)
+				s.dropSignalUser(ctx, pn.SignalAddressUser())
+			}
+		}
+
+		sigUser := enc.SignalAddressUser()
+		if force && !seenUser[sigUser] {
+			seenUser[sigUser] = true
+			s.dropSignalUser(ctx, sigUser)
+		}
+
+		addr := enc.SignalAddress().String()
+		has, err := s.cli.Store.Sessions.HasSession(ctx, addr)
+		if err != nil {
+			return err
+		}
+		if !has || force {
+			missing = append(missing, enc)
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+	_ = di.FetchPreKeysNoError(ctx, missing)
 	return nil
+}
+
+func (s *Socket) dropSignalUser(ctx context.Context, user string) {
+	if user == "" || s.cli.Store == nil {
+		return
+	}
+	if s.cli.Store.Sessions != nil {
+		_ = s.cli.Store.Sessions.DeleteAllSessions(ctx, user)
+	}
+	if s.cli.Store.Identities != nil {
+		_ = s.cli.Store.Identities.DeleteAllIdentities(ctx, user)
+	}
 }
 
 func (s *Socket) CreateParticipantNodes(ctx context.Context, devices []types.JID, callKey []byte, encAttrs waBinary.Attrs) ([]waBinary.Node, bool, error) {

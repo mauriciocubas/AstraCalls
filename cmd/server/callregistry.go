@@ -2,6 +2,7 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"wacalls/internal/voip/call"
 	"wacalls/internal/voip/media"
@@ -13,6 +14,7 @@ type activeCall struct {
 	wsBridge    *wsBridge // ponte WebSocket (alternativa ao pion WebRTC para proxies HTTP)
 	browserOpus media.Codec
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
+	startedAt   time.Time
 }
 
 type callRegistry struct {
@@ -27,7 +29,31 @@ func newCallRegistry() *callRegistry {
 func (r *callRegistry) add(callID string, ac *activeCall) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if ac.startedAt.IsZero() {
+		ac.startedAt = time.Now()
+	}
 	r.calls[callID] = ac
+}
+
+// staleRingingIDs: chamadas sem ponte de áudio mais velhas que maxAge (órfãs
+// típicas quando o hangup SIP não limpou o registry).
+func (r *callRegistry) staleRingingIDs(maxAge time.Duration) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	var out []string
+	for id, ac := range r.calls {
+		if ac == nil {
+			continue
+		}
+		if ac.bridge != nil || ac.wsBridge != nil {
+			continue
+		}
+		if now.Sub(ac.startedAt) >= maxAge {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (r *callRegistry) get(callID string) (*activeCall, bool) {
@@ -52,6 +78,16 @@ func (r *callRegistry) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.calls)
+}
+
+func (r *callRegistry) ids() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.calls))
+	for id := range r.calls {
+		out = append(out, id)
+	}
+	return out
 }
 
 func (r *callRegistry) setBridge(callID string, b *Bridge, oc media.Codec) (*Bridge, media.Codec, bool) {

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
+
+	"wacalls/internal/voip/core"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -27,7 +30,7 @@ type SessionManager struct {
 }
 
 func newSessionManager(ctx context.Context, db *dbProvider, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, maxCalls int) *SessionManager {
-	return &SessionManager{
+	m := &SessionManager{
 		appCtx:   ctx,
 		db:       db,
 		broker:   broker,
@@ -36,6 +39,44 @@ func newSessionManager(ctx context.Context, db *dbProvider, broker *Broker, stor
 		log:      log,
 		maxCalls: maxCalls,
 		sessions: map[string]*Session{},
+	}
+	m.startOrphanSweeper()
+	return m
+}
+
+// startOrphanSweeper evita "max concurrent calls" por ligações SIP que morreram
+// sem limpar o registry (bug histórico do hangup no sip-bridge). Só mexe em
+// chamadas SEM ponte de áudio após o orçamento de toque.
+func (m *SessionManager) startOrphanSweeper() {
+	const maxRinging = 90 * time.Second
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-m.appCtx.Done():
+				return
+			case <-t.C:
+				m.sweepOrphanCalls(maxRinging)
+			}
+		}
+	}()
+}
+
+func (m *SessionManager) sweepOrphanCalls(maxRinging time.Duration) {
+	m.mu.RLock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.RUnlock()
+	for _, s := range sessions {
+		for _, id := range s.reg.staleRingingIDs(maxRinging) {
+			m.log.Info("sweep orphan call", "session", s.id, "call_id", id)
+			s.terminateCall(id, core.EndCallReasonTimeout)
+			s.removeCall(id)
+			m.broker.endCall(id, string(core.EndCallReasonTimeout))
+		}
 	}
 }
 

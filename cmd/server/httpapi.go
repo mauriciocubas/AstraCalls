@@ -21,6 +21,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/calls", s.handleSessionCallsClear)
 	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
 	mux.HandleFunc("POST /api/sessions/{sid}/logout", s.handleSessionLogout)
 	mux.HandleFunc("POST /api/sessions/{sid}/pair", s.handleSessionPair)
@@ -289,6 +290,29 @@ func (s *server) handleSessionCalls(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"active":             sess.reg.count(),
 		"maxCallsPerSession": s.sessions.maxCalls,
+		"ids":                sess.reg.ids(),
+	})
+}
+
+// handleSessionCallsClear encerra todas as chamadas ativas da sessão (órfãs
+// inclusas). Usado pra destravar "max concurrent calls" sem reiniciar o motor.
+func (s *server) handleSessionCallsClear(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	ids := sess.reg.ids()
+	for _, id := range ids {
+		if ac, ok := sess.reg.get(id); ok {
+			_ = ac.cm.EndCall(r.Context(), core.EndCallReasonUserEnded)
+		}
+		sess.removeCall(id)
+		s.broker.endCall(id, string(core.EndCallReasonUserEnded))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cleared": len(ids),
+		"ids":     ids,
+		"active":  sess.reg.count(),
 	})
 }
 
