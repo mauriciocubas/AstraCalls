@@ -1,5 +1,7 @@
 FROM golang:1.27-bookworm
 WORKDIR /src
 COPY . .
-RUN mkdir -p /out && CGO_ENABLED=1 CGO_LDFLAGS="-L/src/native" go build -tags mlow -o /out/astracalls-mlow ./cmd/server
+# -s -w: mesmo perfil do binário estável em produção (Nov/3 ~34MB).
+RUN mkdir -p /out && CGO_ENABLED=1 CGO_LDFLAGS="-L/src/native" \
+	go build -tags mlow -ldflags="-s -w" -o /out/astracalls-mlow ./cmd/server
 
