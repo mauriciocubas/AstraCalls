@@ -73,6 +73,9 @@ func main() {
 	// Worker de reentrega ao Chatwoot: reenvia com backoff o que falhou (ex.:
 	// Chatwoot fora do ar) em vez de perder a mensagem.
 	go srv.sessions.runChatwootOutbox(ctx)
+	// Worker de reentrega do webhook da sessão → Foorce: cobre OOM/restart
+	// do integrador (mesma ideia do outbox Chatwoot).
+	go srv.sessions.runWebhookOutbox(ctx)
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {

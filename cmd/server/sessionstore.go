@@ -78,6 +78,26 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	}
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS chatwoot_outbox_due ON chatwoot_outbox (dead, next_at)`)
 
+	// Fila de reentrega do webhook da sessão → Foorce (ver webhook_outbox.go).
+	// Sobrevive a restart/OOM do integrador: POST falho fica aqui e é
+	// reentregue com backoff em vez de perder a mensagem.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS webhook_outbox (
+		id         BIGSERIAL PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		source_id  TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		payload    JSONB NOT NULL,
+		attempts   INT NOT NULL DEFAULT 0,
+		next_at    BIGINT NOT NULL,
+		created_at BIGINT NOT NULL,
+		last_error TEXT,
+		dead       BOOLEAN NOT NULL DEFAULT false,
+		UNIQUE (session_id, source_id)
+	)`); err != nil {
+		return nil, err
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS webhook_outbox_due ON webhook_outbox (dead, next_at)`)
+
 	return &sessionStore{db: db}, nil
 }
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +18,10 @@ var webhookClient = &http.Client{Timeout: 10 * time.Second}
 
 // dispatchWebhook envia um evento para a URL de webhook da sessão (se houver),
 // de forma assíncrona. Formato: {session, event, timestamp, data}.
+//
+// Se o POST falhar (rede, timeout, HTTP não-2xx), a carga vai pra
+// webhook_outbox e o worker reentrega com backoff — sem isso, restart/OOM
+// do Foorce apaga mensagens ao vivo (ver webhook_outbox.go).
 func (s *Session) dispatchWebhook(event string, data any) {
 	url := s.getWebhook()
 	if url == "" {
@@ -34,17 +37,13 @@ func (s *Session) dispatchWebhook(event string, data any) {
 		return
 	}
 	go func() {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), webhookClient.Timeout)
+		defer cancel()
+		if err := postWebhookOnce(ctx, url, body); err != nil {
+			s.log.Debug("webhook post failed — enfileirando", "url", url, "event", event, "err", err)
+			s.enqueueWebhookOutbox(event, data, url, body)
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := webhookClient.Do(req)
-		if err != nil {
-			s.log.Debug("webhook post failed", "url", url, "err", err)
-			return
-		}
-		_ = resp.Body.Close()
 	}()
 }
 
