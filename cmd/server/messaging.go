@@ -178,6 +178,9 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		Mimetype: proto.String(mime), PTT: proto.Bool(b.PTT),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		// Sem isto o WhatsApp recebe o áudio mas o destino não consegue baixar/abrir
+		// ("Couldn't download") — mesmo bug que já existia pra vídeo sem sidecar.
+		StreamingSidecar: up.StreamingSidecar,
 	}})
 }
 
@@ -202,6 +205,9 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 		Caption: proto.String(b.Caption), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		// up.StreamingSidecar já era gerado pelo whatsmeow pra vídeo, mas nunca
+		// era colocado na mensagem — mesma falha de download que o áudio tinha.
+		StreamingSidecar: up.StreamingSidecar,
 	}})
 }
 

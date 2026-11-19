@@ -2,6 +2,10 @@ module wacalls
 
 go 1.26.4
 
+// HexaVox patch: sidecar de streaming também pra áudio/PTT, não só vídeo.
+// Ver third_party/whatsmeow/README-HEXAVOX-PATCH.md
+replace go.mau.fi/whatsmeow => ./third_party/whatsmeow
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.10.0
