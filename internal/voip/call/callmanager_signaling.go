@@ -26,6 +26,18 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	callKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid)
 	if err != nil {
 		m.log.Error("offer decrypt call key", "err", err)
+		// Achado ao vivo 26/11 (Alpha Piscinas): sessão Signal dessincronizada
+		// com o peer fazia TODO offer dele falhar silenciosamente — a chamada
+		// seguia sem EncryptionKey, a Bitrix atendia, mas AcceptCall nunca
+		// conseguia avisar o WhatsApp (ver AcceptCall). Forçar sessão nova
+		// aqui não recupera a cifra JÁ recebida (foi cifrada pra sessão
+		// velha), mas conserta a sessão pras PRÓXIMAS ligações desse peer —
+		// sem isso ficava quebrado pra sempre até reiniciar o processo.
+		if assertErr := m.sock.AssertSessions(ctx, []types.JID{peerJid}, true); assertErr != nil {
+			m.log.Error("offer decrypt: assert sessions (resync) failed", "err", assertErr)
+		} else {
+			m.log.Info("offer decrypt: sessão resincronizada com o peer — próxima ligação dele deve decifrar", "peer", peerJid.String())
+		}
 	}
 	// O offer de ENTRADA traz o <relay> no formato te2 (igual ao ack da saída).
 	// ExtractRelayEndpoints é do formato antigo (ip/token) e dava 0 relays = sem

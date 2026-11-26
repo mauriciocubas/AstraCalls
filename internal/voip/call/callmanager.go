@@ -204,28 +204,38 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		m.mu.Unlock()
 		return &CallError{"call cannot be accepted in state " + string(call.StateData.State)}
 	}
+	key := call.EncryptionKey
+	// Achado ao vivo 26/11 (Alpha Piscinas): quando o offer chegava sem
+	// conseguir decifrar a call key (sessão Signal dessincronizada — ver
+	// HandleCallOffer), esta função seguia em frente, retornava nil (sucesso)
+	// e NUNCA mandava o accept pro WhatsApp — a Bitrix "atendia" e ficávamos
+	// bridgeando áudio pro nada, enquanto o chamador continuava ouvindo
+	// chamando. Falhar explicitamente aqui deixa o sip-bridge derrubar a
+	// ligação SIP em vez de fingir que atendeu.
+	if key == nil {
+		m.mu.Unlock()
+		m.log.Error("accept skipped: missing call key", "call_id", callID)
+		return &CallError{"missing call encryption key — offer decrypt failed, cannot signal accept to peer"}
+	}
 	_ = call.ApplyTransition(Transition{Type: TransitionLocalAccepted})
 	m.emitState()
-	key := call.EncryptionKey
 	peer := wanode.MustJID(call.PeerJid)
 	creator := wanode.MustJID(call.CallCreator)
 	isVideo := call.MediaType == core.CallMediaTypeVideo
 	relayData := call.RelayData
 	m.mu.Unlock()
 
-	if key != nil {
-		acceptNode, err := signaling.BuildAcceptStanza(ctx, m.sock, callID, key, peer, creator, isVideo)
-		if err != nil {
-			m.log.Error("build accept failed", "err", err)
-		} else {
-			// envia o accept em background: não bloquear a UI até 15s no timeout do ack
-			go func() {
-				if _, err := m.sock.Query(context.Background(), acceptNode); err != nil {
-					m.log.Error("accept query error", "err", err)
-				}
-			}()
-		}
+	acceptNode, err := signaling.BuildAcceptStanza(ctx, m.sock, callID, key, peer, creator, isVideo)
+	if err != nil {
+		m.log.Error("build accept failed", "err", err)
+		return &CallError{"build accept failed: " + err.Error()}
 	}
+	// envia o accept em background: não bloquear a UI até 15s no timeout do ack
+	go func() {
+		if _, err := m.sock.Query(context.Background(), acceptNode); err != nil {
+			m.log.Error("accept query error", "err", err)
+		}
+	}()
 
 	if relayData != nil {
 		m.connectRelays(relayData.Endpoints)
