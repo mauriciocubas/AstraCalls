@@ -223,7 +223,11 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
-		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo)
+		// hasKey=false: offer chegou sem decifrar a call key (sessão Signal
+		// dessincronizada) — AcceptCall vai falhar de qualquer jeito (ver
+		// callmanager.go), então o consumidor (sip-bridge) nem toca o
+		// destino (Bitrix/softphone) em vez de tocar e cair na hora do atender.
+		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo, c.EncryptionKey != nil)
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {

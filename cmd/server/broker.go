@@ -306,14 +306,15 @@ func (b *Broker) broadcastCallList() {
 	b.broadcast(map[string]any{"type": "call-list", "calls": list})
 }
 
-func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video bool) {
+func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video, hasKey bool) {
 	// escopado por conta: só toca no widget da empresa dona da sessão.
 	// phone/name resolvidos (issue #9): o widget mostra o número/nome em vez do
 	// LID cru; peer segue no payload por compatibilidade.
+	// hasKey: ver comentário em session.go wireCall (OnIncoming).
 	b.broadcastForSession(sessionID, map[string]any{
 		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer,
 		"phone": phone, "name": name,
-		"video": video, "offeredAt": time.Now().UnixMilli(),
+		"video": video, "hasKey": hasKey, "offeredAt": time.Now().UnixMilli(),
 	})
 }
 
