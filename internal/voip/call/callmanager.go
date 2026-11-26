@@ -61,6 +61,11 @@ type CallManager struct {
 
 	OnVideoUpgradeRequest func(*CallInfo) // o peer pediu um upgrade p/ vídeo
 	OnVideoStateChanged   func(*CallInfo) // qualquer mudança no estado de vídeo
+
+	// OnDecryptFail dispara quando um offer de chamada chega sem conseguir
+	// decifrar a call key (sessão Signal dessincronizada com o peer) — ver
+	// HandleCallOffer. peerJid vem como string (jid completo).
+	OnDecryptFail func(peerJid string, errMsg string)
 }
 
 func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {

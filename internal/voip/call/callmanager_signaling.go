@@ -26,6 +26,9 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	callKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid)
 	if err != nil {
 		m.log.Error("offer decrypt call key", "err", err)
+		if m.OnDecryptFail != nil {
+			m.OnDecryptFail(peerJid.String(), err.Error())
+		}
 		// Achado ao vivo 26/11 (Alpha Piscinas): sessão Signal dessincronizada
 		// com o peer fazia TODO offer dele falhar silenciosamente — a chamada
 		// seguia sem EncryptionKey, a Bitrix atendia, mas AcceptCall nunca
@@ -37,6 +40,22 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 			m.log.Error("offer decrypt: assert sessions (resync) failed", "err", assertErr)
 		} else {
 			m.log.Info("offer decrypt: sessão resincronizada com o peer — próxima ligação dele deve decifrar", "peer", peerJid.String())
+		}
+		// Teste de laboratório (26/11, número de teste, não liberado geral
+		// ainda): AssertSessions acima só arruma o lado de SAIR (nós→peer).
+		// O problema real é o lado de ENTRAR (peer→nós) — é esse retry-receipt
+		// que pede pro peer remontar a sessão dele e reenviar sozinho, sem
+		// QR nem mensagem manual. Protocolo não comprovado pra <call>; só
+		// dispara aqui, observando o resultado antes de promover pra todo
+		// mundo (ver README-HEXAVOX-PATCH.md).
+		if stanzaID := wanode.AttrString(node.Attrs, "id"); stanzaID != "" {
+			if retryErr := m.sock.SendCallKeyRetryReceipt(ctx, peerJid, stanzaID); retryErr != nil {
+				m.log.Error("offer decrypt: retry-receipt de chamada falhou", "err", retryErr)
+			} else {
+				m.log.Info("offer decrypt: retry-receipt de chamada mandado — aguardando se o peer reenvia sozinho", "peer", peerJid.String(), "stanza_id", stanzaID)
+			}
+		} else {
+			m.log.Warn("offer decrypt: sem id na stanza <call> — não dá pra mandar retry-receipt")
 		}
 	}
 	// O offer de ENTRADA traz o <relay> no formato te2 (igual ao ack da saída).

@@ -229,6 +229,16 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		// destino (Bitrix/softphone) em vez de tocar e cair na hora do atender.
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo, c.EncryptionKey != nil)
 	}
+	cm.OnDecryptFail = func(peerJid string, errMsg string) {
+		phone, name := s.resolvePeer(peerJid)
+		s.dispatchWebhook("session_decrypt_fail", map[string]any{
+			"kind":  "ligacao",
+			"peer":  peerJid,
+			"phone": phone,
+			"name":  name,
+			"error": errMsg,
+		})
+	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
 			s.removeCall(c.CallID)
@@ -317,7 +327,7 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 }
 
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
-	node := wrapCall(evt.From, evt.Data)
+	node := wrapCallWithID(evt.From, evt.StanzaID, evt.Data)
 	callID := callIDFromNode(node)
 	if callID == "" {
 		return
@@ -443,6 +453,20 @@ func (s *Session) handleEvent(rawEvt any) {
 		// libera o conteúdo p/ dispositivos vinculados. Avisa o atendente/webhook.
 		if evt.IsUnavailable && evt.UnavailableType == events.UnavailableTypeViewOnce {
 			go s.handleUnavailableViewOnce(evt)
+		} else if !evt.IsUnavailable {
+			// Mensagem normal que não decifrou (sessão Signal quebrada/dessincronizada
+			// com o peer) — mesma classe de problema do achado 26/11 em chamada.
+			// O whatsmeow já pede retry sozinho (ver doc do evento), mas isso ficava
+			// sem nenhuma visibilidade — ninguém via a menos que procurasse no log.
+			sender := evt.Info.Sender.String()
+			phone, name := s.resolvePeer(sender)
+			s.dispatchWebhook("session_decrypt_fail", map[string]any{
+				"kind":  "mensagem",
+				"peer":  sender,
+				"phone": phone,
+				"name":  name,
+				"error": string(evt.DecryptFailMode),
+			})
 		}
 	case *events.Receipt:
 		s.dispatchWebhook("receipt", map[string]any{
