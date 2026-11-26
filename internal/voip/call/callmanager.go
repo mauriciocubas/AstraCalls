@@ -230,10 +230,16 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		m.log.Error("build accept failed", "err", err)
 		return &CallError{"build accept failed: " + err.Error()}
 	}
-	// envia o accept em background: não bloquear a UI até 15s no timeout do ack
+	// envia o accept em background: não bloquear a UI até 15s no timeout do ack.
+	// Se o envio falhar de verdade (não só o ack demorar), o accept nunca
+	// chegou no peer — antes isso só virava log, a chamada ficava "aceita"
+	// pro resto do sistema (SIP/Bitrix bridgeado) sem o WhatsApp nunca saber.
+	// EndCall força TERMINATE real pro peer e dispara OnEnded (SSE "ended"),
+	// que o sip-bridge já escuta pra derrubar o lado Bitrix.
 	go func() {
 		if _, err := m.sock.Query(context.Background(), acceptNode); err != nil {
-			m.log.Error("accept query error", "err", err)
+			m.log.Error("accept query error — encerrando chamada (peer nunca recebeu o accept)", "err", err, "call_id", callID)
+			_ = m.EndCall(context.Background(), core.EndCallReasonFailed)
 		}
 	}()
 
