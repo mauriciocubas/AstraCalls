@@ -327,7 +327,7 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 }
 
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
-	node := wrapCallWithID(evt.From, evt.StanzaID, evt.Data)
+	node := wrapCall(evt.From, evt.Data)
 	callID := callIDFromNode(node)
 	if callID == "" {
 		return

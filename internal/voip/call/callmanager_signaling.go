@@ -41,22 +41,12 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 		} else {
 			m.log.Info("offer decrypt: sessão resincronizada com o peer — próxima ligação dele deve decifrar", "peer", peerJid.String())
 		}
-		// Teste de laboratório (26/11, número de teste, não liberado geral
-		// ainda): AssertSessions acima só arruma o lado de SAIR (nós→peer).
-		// O problema real é o lado de ENTRAR (peer→nós) — é esse retry-receipt
-		// que pede pro peer remontar a sessão dele e reenviar sozinho, sem
-		// QR nem mensagem manual. Protocolo não comprovado pra <call>; só
-		// dispara aqui, observando o resultado antes de promover pra todo
-		// mundo (ver README-HEXAVOX-PATCH.md).
-		if stanzaID := wanode.AttrString(node.Attrs, "id"); stanzaID != "" {
-			if retryErr := m.sock.SendCallKeyRetryReceipt(ctx, peerJid, stanzaID); retryErr != nil {
-				m.log.Error("offer decrypt: retry-receipt de chamada falhou", "err", retryErr)
-			} else {
-				m.log.Info("offer decrypt: retry-receipt de chamada mandado — aguardando se o peer reenvia sozinho", "peer", peerJid.String(), "stanza_id", stanzaID)
-			}
-		} else {
-			m.log.Warn("offer decrypt: sem id na stanza <call> — não dá pra mandar retry-receipt")
-		}
+		// Testado em laboratório (26/11, número de teste): um retry-receipt de
+		// chamada (pedindo pro peer remontar a sessão e reenviar sozinho, sem
+		// QR/mensagem manual) não curou em 2 tentativas reais — protocolo da
+		// Bitrix/WhatsApp não confirma suporte a isso pra <call> (só documentado
+		// pra <message>). Removido: não revalidar sem evidência nova de que
+		// funciona antes de reintroduzir.
 	}
 	// O offer de ENTRADA traz o <relay> no formato te2 (igual ao ack da saída).
 	// ExtractRelayEndpoints é do formato antigo (ip/token) e dava 0 relays = sem
